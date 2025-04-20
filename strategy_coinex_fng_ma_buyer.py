@@ -229,7 +229,7 @@ def main():
     except schedule.ScheduleValueError as e:
         log_message(f"Error: Invalid TRIGGER_TIME format ({trigger_time}): {str(e)}", level="error")
         return
-    
+    run_strategy()  # Run immediately on startup
     while True:
         schedule.run_pending()
         time.sleep(60)

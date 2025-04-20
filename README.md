@@ -1,0 +1,1 @@
+buy and hodl strategy script for coinex
