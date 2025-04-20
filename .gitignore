@@ -2,3 +2,5 @@ envs7
 .env
 .env*
 +*.env
+.old
+btc_usdt_historical.csv
