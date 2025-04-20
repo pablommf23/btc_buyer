@@ -1,0 +1,4 @@
+requests==2.31.0
+pandas==2.2.2
+sentry-sdk==1.45.0
+schedule==1.2.1
