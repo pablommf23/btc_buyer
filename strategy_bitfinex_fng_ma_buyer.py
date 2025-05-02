@@ -6,11 +6,12 @@ import hashlib
 import hmac
 import schedule
 import sentry_sdk
+import json
+import base64
 from datetime import datetime, timedelta
 from requests.exceptions import RequestException
 from sentry_sdk import capture_message, capture_exception
 import uuid
-import json
 
 # Initialize Sentry
 sentry_dsn = os.environ.get('SENTRY_DSN')
@@ -20,7 +21,7 @@ else:
     sentry_sdk.init(dsn=sentry_dsn, traces_sample_rate=1.0)
 
 # Configuration
-API_VERSION = 'v2'  # Use API v2
+API_VERSION = 'v2'  # Use Bitfinex API v2
 ma_period = int(os.environ.get('MA_PERIOD_DAYS', 730))  # Default to 730 days
 
 def log_message(message, level="info"):
@@ -31,35 +32,34 @@ def log_message(message, level="info"):
 
 def validate_env_vars():
     """Validate required environment variables."""
-    required_vars = ['COINEX_API_KEY', 'COINEX_API_SECRET', 'TRIGGER_TIME', 'FNG_THRESHOLD_PERCENT', 'MA_THRESHOLD_PERCENT']
+    required_vars = ['BITFINEX_API_KEY', 'BITFINEX_API_SECRET', 'TRIGGER_TIME', 'FNG_THRESHOLD_PERCENT', 'MA_THRESHOLD_PERCENT']
     missing = [var for var in required_vars if not os.environ.get(var)]
     if missing:
         log_message(f"Error: Missing environment variables: {', '.join(missing)}", level="error")
         return False
     return True
 
-def get_coinex_price(symbol='BTCUSDT', retries=3, delay=5):
-    """Fetch current price from CoinEx API v2."""
-    url = f"https://api.coinex.com/v2/spot/ticker?market={symbol}"
+def get_bitfinex_price(symbol='tBTCUST', retries=3, delay=5):
+    """Fetch current price from Bitfinex API v2."""
+    url = f"https://api-pub.bitfinex.com/v2/ticker/{symbol}"
     for attempt in range(retries):
         try:
             response = requests.get(url, timeout=20)
             response.raise_for_status()
             data = response.json()
-            if data['code'] != 0:
-                raise Exception(f"Coinex API error: {data['message']}")
-            # Access the 'last' price from the first ticker
-            return float(data['data'][0]['last'])
+            # Bitfinex ticker: [BID, BID_SIZE, ASK, ASK_SIZE, DAILY_CHANGE, DAILY_CHANGE_PERC, LAST_PRICE, VOLUME, HIGH, LOW]
+            last_price = float(data[6])  # LAST_PRICE
+            return last_price
         except Exception as e:
             log_message(f"Attempt {attempt+1}/{retries} to fetch price failed: {str(e)}", level="warning")
             if attempt < retries - 1:
                 time.sleep(delay)
             else:
-                log_message(f"Failed to fetch Coinex price: {str(e)}", level="error")
+                log_message(f"Failed to fetch Bitfinex price: {str(e)}", level="error")
                 raise
 
-def get_coinex_historical_data(days=ma_period, symbol='BTCUSDT', retries=3, delay=5):
-    """Fetch historical K-line data from CoinEx API v2."""
+def get_bitfinex_historical_data(days=ma_period, symbol='tBTCUST', retries=3, delay=5):
+    """Fetch historical candlestick data from Bitfinex API v2."""
     cache_file = './btc_usdt_historical.csv'
     
     # Load cache if recent and sufficient
@@ -78,20 +78,21 @@ def get_coinex_historical_data(days=ma_period, symbol='BTCUSDT', retries=3, dela
         log_message(f"Failed to load cache: {str(e)}", level="warning")
 
     # Fetch historical data
-    url = f"https://api.coinex.com/v2/spot/kline?market={symbol}&period=1day&limit={days}"
+    end_time = int(time.time() * 1000)  # Current time in milliseconds
+    start_time = end_time - (days * 24 * 60 * 60 * 1000)  # Days ago
+    url = f"https://api-pub.bitfinex.com/v2/candles/trade:1D:{symbol}/hist?start={start_time}&end={end_time}&limit={days}"
     for attempt in range(retries):
         try:
             response = requests.get(url, timeout=20)
             response.raise_for_status()
             data = response.json()
-            if data['code'] != 0:
-                raise Exception(f"Coinex API error: {data['message']}")
-            if not data['data']:
+            if not data:
                 raise Exception("No historical data returned")
             
+            # Bitfinex candles: [MTS, OPEN, CLOSE, HIGH, LOW, VOLUME]
             records = [
-                {'timestamp': int(kline['created_at'] / 1000), 'close': float(kline['close'])}
-                for kline in data['data']
+                {'timestamp': int(candle[0] / 1000), 'close': float(candle[2])}
+                for candle in data
             ]
             df = pd.DataFrame(records)
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
@@ -119,55 +120,50 @@ def get_coinex_historical_data(days=ma_period, symbol='BTCUSDT', retries=3, dela
                 log_message(f"Failed to fetch historical data: {str(e)}", level="error")
                 raise
 
-def coinex_buy_order(btc_amount, api_key, api_secret, retries=3, delay=5):
-    """Place a market buy order on CoinEx using API v2."""
-    url = "https://api.coinex.com/v2/spot/order"
+def bitfinex_buy_order(btc_amount, api_key, api_secret, retries=3, delay=5):
+    """Place a market buy order on Bitfinex using API v2."""
+    url = "https://api.bitfinex.com/v2/auth/w/order/submit"
     for attempt in range(retries):
         try:
-            timestamp = str(int(time.time() * 1000))  # Milliseconds since epoch
-            params = {
-                'market': 'BTCUSDT',
-                'side': 'buy',
-                'type': 'market',
-                'market_type': 'SPOT',
+            nonce = str(int(time.time() * 1000))  # Milliseconds since epoch
+            body = {
+                'type': 'EXCHANGE MARKET',
+                'symbol': 'tBTCUST',
                 'amount': str(round(btc_amount, 8)),
-                'client_id': f"strategy6_{uuid.uuid4().hex[:8]}",  # Unique client ID
-                'tonce': timestamp
+                'meta': {'client_id': f"strategy6_{uuid.uuid4().hex[:8]}"}
             }
-
-            # 1. Sort parameters alphabetically (CRITICAL for signature)
-            query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
-            print(f"Query string for signature: {query_string}")
-            # 2. Generate signature (HMAC-SHA256, uppercase)
+            payload = json.dumps(body)
+            
+            # Generate signature
+            sig_path = f"/api/v2/auth/w/order/submit"
             signature = hmac.new(
                 api_secret.encode('utf-8'),
-                query_string.encode('utf-8'),
-                hashlib.sha256
-            ).hexdigest().upper()
-            print(f"Generated signature: {signature}")
-            # 3. Set headers (EXACT names and Content-Type)
+                f"AUTH{nonce}{sig_path}{payload}".encode('utf-8'),
+                hashlib.sha384
+            ).hexdigest()
+            
             headers = {
-                'X-COINEX-ACCESS-ID': api_key,
-                'X-COINEX-TONCE': timestamp,
-                'X-COINEX-SIGN': signature,
-                'Content-Type': 'application/json'  # Important!
+                'bfx-apikey': api_key,
+                'bfx-nonce': nonce,
+                'bfx-signature': signature,
+                'Content-Type': 'application/json'
             }
-            print(f"Headers: {headers}")
-            # 4. Send POST request with params as JSON body
-            response = requests.post(url, headers=headers, data=json.dumps(params), timeout=20)
-            response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+            
+            response = requests.post(url, headers=headers, data=payload, timeout=20)
+            response.raise_for_status()
             data = response.json()
-
-            if data['code'] == 0:
-                return data['data']  # Order details
-            raise Exception(f"CoinEx buy order error: {data['message']}")
+            
+            # Bitfinex response: [ID, ...]
+            if isinstance(data, list) and len(data) > 0:
+                return {'id': data[0]}  # Simulate CoinEx-like response
+            raise Exception(f"Bitfinex buy order error: {data}")
 
         except Exception as e:
             log_message(f"Attempt {attempt+1}/{retries} to place buy order failed: {str(e)}", level="warning")
             if attempt < retries - 1:
                 time.sleep(delay)
             else:
-                log_message(f"Failed to place CoinEx buy order: {str(e)}", level="error")
+                log_message(f"Failed to place Bitfinex buy order: {str(e)}", level="error")
                 raise
 
 def compute_buy_decision():
@@ -189,7 +185,7 @@ def compute_buy_decision():
 
     # Fetch historical data for MA
     try:
-        btc_df = get_coinex_historical_data()
+        btc_df = get_bitfinex_historical_data()
         if btc_df.empty:
             raise Exception("Historical data is empty")
         
@@ -209,7 +205,7 @@ def compute_buy_decision():
 
     # Get current BTC/USDT price
     try:
-        current_price = get_coinex_price()
+        current_price = get_bitfinex_price()
         log_message(f"{current_date}: Current BTC/USDT price: {current_price:.2f}")
     except Exception as e:
         log_message(f"{current_date}: No purchase - Failed to fetch price: {str(e)}", level="error")
@@ -230,14 +226,14 @@ def compute_buy_decision():
     log_message(f"{current_date}: Buy conditions - FNG: {buy_fng}, MA: {buy_ma}, Overlap: {overlap}")
 
     # Get API credentials and buy amounts
-    api_key = '40EC2CF286374A0AB0E2096230AF300C'  #os.environ.get('COINEX_API_KEY')
-    api_secret = 'EC7251EE5C287BFCF642DC3597542084E9176EAC2903D97B' #os.environ.get('COINEX_API_SECRET')
+    api_key = os.environ.get('BITFINEX_API_KEY')
+    api_secret = os.environ.get('BITFINEX_API_SECRET')
     buy_overlap_amount = os.environ.get('BUY_OVERLAP_AMOUNT')
     buy_fng_amount = os.environ.get('BUY_FNG_AMOUNT')
     buy_ma_amount = os.environ.get('BUY_MA_AMOUNT')
 
     if not api_key or not api_secret:
-        log_message(f"{current_date}: No purchase - Missing COINEX_API_KEY or COINEX_API_SECRET", level="error")
+        log_message(f"{current_date}: No purchase - Missing BITFINEX_API_KEY or BITFINEX_API_SECRET", level="error")
         return f"{current_date}: No purchase - Missing API credentials"
 
     # Determine purchase
@@ -267,7 +263,7 @@ def compute_buy_decision():
 
     # Place buy order
     try:
-        order = coinex_buy_order(btc_amount, api_key, api_secret)
+        order = bitfinex_buy_order(btc_amount, api_key, api_secret)
         log_message(f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason} (Order ID: {order['id']})")
         return f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}"
     except Exception as e:
@@ -293,8 +289,8 @@ def main():
     start_message = (
         f"Container started at {start_time}\n"
         f"TRIGGER_TIME: {trigger_time}\n"
-        f"COINEX_API_KEY: {'Set' if os.environ.get('COINEX_API_KEY') else 'Not set'}\n"
-        f"COINEX_API_SECRET: {'Set' if os.environ.get('COINEX_API_SECRET') else 'Not set'}\n"
+        f"BITFINEX_API_KEY: {'Set' if os.environ.get('BITFINEX_API_KEY') else 'Not set'}\n"
+        f"BITFINEX_API_SECRET: {'Set' if os.environ.get('BITFINEX_API_SECRET') else 'Not set'}\n"
         f"SENTRY_DSN: {'Set' if sentry_dsn else 'Not set'}\n"
         f"Moving average period: {ma_period} days\n"
         f"Buy amount for overlap: {os.environ.get('BUY_OVERLAP_AMOUNT', 'Not set')}\n"
