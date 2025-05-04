@@ -46,7 +46,7 @@ def validate_env_vars():
 
 def get_bitfinex_price(symbol='tBTCUSD', retries=3, delay=5):
     """Fetch current price from Bitfinex API v2."""
-    url = f"https://api-pub.bitfinex.com/v2/ticker/tBTCUSD"
+    url = f"https://api-pub.bitfinex.com/v2/ticker/{symbol}"
     for attempt in range(retries):
         try:
             response = requests.get(url, timeout=20)
@@ -82,7 +82,7 @@ def get_bitfinex_historical_data(days=ma_period, symbol='tBTCUSD', retries=3, de
 
     end_time = int(time.time() * 1000)
     start_time = end_time - (days * 24 * 60 * 60 * 1000)
-    url = f"https://api-pub.bitfinex.com/v2/candles/trade:1D:tBTCUSD/hist?start={start_time}&end={end_time}&limit={days}"
+    url = f"https://api-pub.bitfinex.com/v2/candles/trade:1D:{symbol}/hist?start={start_time}&end={end_time}&limit={days}"
     for attempt in range(retries):
         try:
             response = requests.get(url, timeout=20)
@@ -120,22 +120,26 @@ def get_bitfinex_historical_data(days=ma_period, symbol='tBTCUSD', retries=3, de
                 log_message(f"Failed to fetch historical data: {str(e)}", level="error")
                 raise
 
-async def bitfinex_buy_order(btc_amount, retries=3, delay=5):
+def bitfinex_buy_order(btc_amount, retries=3, delay=5):
     """Place a market buy order on Bitfinex using the SDK."""
     for attempt in range(retries):
         try:
-            order = await bfx.rest.auth.submit_order(
+            notification = bfx.rest.auth.submit_order(
                 type="EXCHANGE MARKET",
                 symbol="tBTCUST",
                 amount=str(round(btc_amount, 8)),
                 price=None,
                 meta={"client_id": f"strategy6_{uuid.uuid4().hex[:8]}"}
             )
-            return {'id': order[0]}
+            if notification.status == "SUCCESS":
+                order = notification.data
+                return {'id': order.id}
+            else:
+                raise Exception(f"Order submission failed: {notification.text}")
         except Exception as e:
             log_message(f"Attempt {attempt+1}/{retries} to place buy order failed: {str(e)}", level="warning")
             if attempt < retries - 1:
-                await asyncio.sleep(delay)
+                time.sleep(delay)
             else:
                 log_message(f"Failed to place Bitfinex buy order: {str(e)}", level="error")
                 raise
@@ -152,8 +156,7 @@ def make_daily_purchase():
         if not api_key or not api_secret:
             log_message("No daily purchase - Missing API credentials", level="error")
             return
-        loop = asyncio.get_event_loop()
-        order = loop.run_until_complete(bitfinex_buy_order(btc_amount))
+        order = bitfinex_buy_order(btc_amount)
         current_price = get_bitfinex_price()
         usdt_amount = btc_amount * current_price
         log_message(f"Daily purchase: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) (Order ID: {order['id']})")
@@ -219,19 +222,15 @@ def compute_buy_decision():
     buy_fng_amount = os.environ.get('BUY_FNG_AMOUNT')
     buy_ma_amount = os.environ.get('BUY_MA_AMOUNT')
 
-    if not api_key or not api_secret:
-        log_message(f"{current_date}: No purchase - Missing BITFINEX_API_KEY or BITFINEX_API_SECRET", level="error")
-        return f"{current_date}: No purchase - Missing API credentials"
-
     try:
         if overlap:
-            btc_amount = float(buy_overlap_amount) if buy_overlap_amount else 0.0002
+            btc_amount = float(buy_overlap_amount) if buy_overlap_order_amount else 0.0002
             reason = f"Overlap (Fear and Greed ≤ {fng_threshold}, Price ≥ {ma_threshold*100}% below MA)"
         elif buy_fng:
             btc_amount = float(buy_fng_amount) if buy_fng_amount else 0.0001
             reason = f"Fear and Greed ≤ {fng_threshold}"
         elif buy_ma:
-            btc_amount = float(buy_ma_amount) if buy_ma_amount else 0.0005
+            btc_order_amount = float(buy_ma_amount) if buy_ma_amount else 0.0005
             reason = f"Price ≥ {ma_threshold*100}% below MA"
         else:
             log_message(f"{current_date}: No purchase - Conditions not met")
@@ -247,8 +246,7 @@ def compute_buy_decision():
     log_message(f"{current_date}: Planning to buy {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}")
 
     try:
-        loop = asyncio.get_event_loop()
-        order = loop.run_until_complete(bitfinex_buy_order(btc_amount))
+        order = bitfinex_buy_order(btc_amount)
         log_message(f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason} (Order ID: {order['id']})")
         return f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}"
     except Exception as e:
