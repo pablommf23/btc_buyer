@@ -44,9 +44,9 @@ def validate_env_vars():
         return False
     return True
 
-def get_bitfinex_price(symbol='tBTCUST', retries=3, delay=5):
+def get_bitfinex_price(symbol='tBTCUSD', retries=3, delay=5):
     """Fetch current price from Bitfinex API v2."""
-    url = f"https://api-pub.bitfinex.com/v2/ticker/{symbol}"
+    url = f"https://api-pub.bitfinex.com/v2/ticker/tBTCUSD"
     for attempt in range(retries):
         try:
             response = requests.get(url, timeout=20)
@@ -62,7 +62,7 @@ def get_bitfinex_price(symbol='tBTCUST', retries=3, delay=5):
                 log_message(f"Failed to fetch Bitfinex price: {str(e)}", level="error")
                 raise
 
-def get_bitfinex_historical_data(days=ma_period, symbol='tBTCUST', retries=3, delay=5):
+def get_bitfinex_historical_data(days=ma_period, symbol='tBTCUSD', retries=3, delay=5):
     """Fetch historical candlestick data from Bitfinex API v2."""
     cache_file = './btc_usdt_historical.csv'
     
@@ -82,7 +82,7 @@ def get_bitfinex_historical_data(days=ma_period, symbol='tBTCUST', retries=3, de
 
     end_time = int(time.time() * 1000)
     start_time = end_time - (days * 24 * 60 * 60 * 1000)
-    url = f"https://api-pub.bitfinex.com/v2/candles/trade:1D:{symbol}/hist?start={start_time}&end={end_time}&limit={days}"
+    url = f"https://api-pub.bitfinex.com/v2/candles/trade:1D:tBTCUSD/hist?start={start_time}&end={end_time}&limit={days}"
     for attempt in range(retries):
         try:
             response = requests.get(url, timeout=20)
@@ -125,12 +125,13 @@ async def bitfinex_buy_order(btc_amount, retries=3, delay=5):
     for attempt in range(retries):
         try:
             order = await bfx.rest.auth.submit_order(
-                type="MARKET",
+                type="EXCHANGE MARKET",
                 symbol="tBTCUST",
                 amount=str(round(btc_amount, 8)),
+                price=None,
                 meta={"client_id": f"strategy6_{uuid.uuid4().hex[:8]}"}
             )
-            return {'id': order[0]}  # Return order ID
+            return {'id': order[0]}
         except Exception as e:
             log_message(f"Attempt {attempt+1}/{retries} to place buy order failed: {str(e)}", level="warning")
             if attempt < retries - 1:
