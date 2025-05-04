@@ -2,16 +2,15 @@ import requests
 import pandas as pd
 import os
 import time
-import hashlib
-import hmac
 import schedule
 import sentry_sdk
 import json
-import base64
 from datetime import datetime, timedelta
 from requests.exceptions import RequestException
 from sentry_sdk import capture_message, capture_exception
+from bfxapi import Client as BitfinexClient
 import uuid
+import asyncio
 
 # Initialize Sentry
 sentry_dsn = os.environ.get('SENTRY_DSN')
@@ -21,8 +20,14 @@ else:
     sentry_sdk.init(dsn=sentry_dsn, traces_sample_rate=1.0)
 
 # Configuration
-API_VERSION = 'v2'  # Use Bitfinex API v2
-ma_period = int(os.environ.get('MA_PERIOD_DAYS', 730))  # Default to 730 days
+API_VERSION = 'v2'
+ma_period = int(os.environ.get('MA_PERIOD_DAYS', 730))
+
+# Initialize Bitfinex client
+bfx = BitfinexClient(
+    api_key=os.environ.get('BITFINEX_API_KEY'),
+    api_secret=os.environ.get('BITFINEX_API_SECRET')
+)
 
 def log_message(message, level="info"):
     """Log message to console and Sentry if configured."""
@@ -32,7 +37,7 @@ def log_message(message, level="info"):
 
 def validate_env_vars():
     """Validate required environment variables."""
-    required_vars = ['BITFINEX_API_KEY', 'BITFINEX_API_SECRET', 'TRIGGER_TIME', 'FNG_THRESHOLD_PERCENT', 'MA_THRESHOLD_PERCENT']
+    required_vars = ['BITFINEX_API_KEY', 'BITFINEX_API_SECRET', 'TRIGGER_TIME', 'FNG_THRESHOLD_PERCENT', 'MA_THRESHOLD_PERCENT', 'BUY_DAILY_AMOUNT']
     missing = [var for var in required_vars if not os.environ.get(var)]
     if missing:
         log_message(f"Error: Missing environment variables: {', '.join(missing)}", level="error")
@@ -47,7 +52,7 @@ def get_bitfinex_price(symbol='tBTCUST', retries=3, delay=5):
             response = requests.get(url, timeout=20)
             response.raise_for_status()
             data = response.json()
-            last_price = float(data[6])  # LAST_PRICE
+            last_price = float(data[6])
             return last_price
         except Exception as e:
             log_message(f"Attempt {attempt+1}/{retries} to fetch price failed: {str(e)}", level="warning")
@@ -115,46 +120,21 @@ def get_bitfinex_historical_data(days=ma_period, symbol='tBTCUST', retries=3, de
                 log_message(f"Failed to fetch historical data: {str(e)}", level="error")
                 raise
 
-def bitfinex_buy_order(btc_amount, api_key, api_secret, retries=3, delay=5):
-    """Place a market buy order on Bitfinex using API v2."""
-    url = "https://api.bitfinex.com/v2/auth/w/order/submit"
+async def bitfinex_buy_order(btc_amount, retries=3, delay=5):
+    """Place a market buy order on Bitfinex using the SDK."""
     for attempt in range(retries):
         try:
-            nonce = str(int(time.time() * 1000))
-            body = {
-                'type': 'EXCHANGE MARKET',
-                'symbol': 'tBTCUST',
-                'amount': str(round(btc_amount, 8)),
-                'meta': {'client_id': f"strategy6_{uuid.uuid4().hex[:8]}"}
-            }
-            payload = json.dumps(body)
-            
-            sig_path = "/v2/auth/w/order/submit"
-            signature = hmac.new(
-                api_secret.encode('utf-8'),
-                f"AUTH{nonce}{sig_path}{payload}".encode('utf-8'),
-                hashlib.sha384
-            ).hexdigest()
-            
-            headers = {
-                'bfx-apikey': api_key,
-                'bfx-nonce': nonce,
-                'bfx-signature': signature,
-                'Content-Type': 'application/json'
-            }
-            
-            response = requests.post(url, headers=headers, data=payload, timeout=20)
-            response.raise_for_status()
-            data = response.json()
-            
-            if isinstance(data, list) and len(data) > 0:
-                return {'id': data[0][0]}
-            raise Exception(f"Bitfinex buy order error: {data}")
-
+            order = await bfx.rest.auth.submit_order(
+                type="MARKET",
+                symbol="tBTCUST",
+                amount=str(round(btc_amount, 8)),
+                meta={"client_id": f"strategy6_{uuid.uuid4().hex[:8]}"}
+            )
+            return {'id': order[0]}  # Return order ID
         except Exception as e:
             log_message(f"Attempt {attempt+1}/{retries} to place buy order failed: {str(e)}", level="warning")
             if attempt < retries - 1:
-                time.sleep(delay)
+                await asyncio.sleep(delay)
             else:
                 log_message(f"Failed to place Bitfinex buy order: {str(e)}", level="error")
                 raise
@@ -171,7 +151,8 @@ def make_daily_purchase():
         if not api_key or not api_secret:
             log_message("No daily purchase - Missing API credentials", level="error")
             return
-        order = bitfinex_buy_order(btc_amount, api_key, api_secret)
+        loop = asyncio.get_event_loop()
+        order = loop.run_until_complete(bitfinex_buy_order(btc_amount))
         current_price = get_bitfinex_price()
         usdt_amount = btc_amount * current_price
         log_message(f"Daily purchase: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) (Order ID: {order['id']})")
@@ -265,7 +246,8 @@ def compute_buy_decision():
     log_message(f"{current_date}: Planning to buy {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}")
 
     try:
-        order = bitfinex_buy_order(btc_amount, api_key, api_secret)
+        loop = asyncio.get_event_loop()
+        order = loop.run_until_complete(bitfinex_buy_order(btc_amount))
         log_message(f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason} (Order ID: {order['id']})")
         return f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}"
     except Exception as e:

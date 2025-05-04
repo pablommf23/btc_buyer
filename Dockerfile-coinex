@@ -4,9 +4,9 @@ WORKDIR /app
 
 RUN pip install --upgrade pip
 
-COPY requirements.txt .
+COPY requirements-coinex.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-coinex.txt
 
 COPY strategy_coinex_fng_ma_buyer.py .
 
