@@ -47,7 +47,6 @@ def get_bitfinex_price(symbol='tBTCUST', retries=3, delay=5):
             response = requests.get(url, timeout=20)
             response.raise_for_status()
             data = response.json()
-            # Bitfinex ticker: [BID, BID_SIZE, ASK, ASK_SIZE, DAILY_CHANGE, DAILY_CHANGE_PERC, LAST_PRICE, VOLUME, HIGH, LOW]
             last_price = float(data[6])  # LAST_PRICE
             return last_price
         except Exception as e:
@@ -62,7 +61,6 @@ def get_bitfinex_historical_data(days=ma_period, symbol='tBTCUST', retries=3, de
     """Fetch historical candlestick data from Bitfinex API v2."""
     cache_file = './btc_usdt_historical.csv'
     
-    # Load cache if recent and sufficient
     try:
         if os.path.exists(cache_file):
             df = pd.read_csv(cache_file, index_col='timestamp', parse_dates=True)
@@ -77,9 +75,8 @@ def get_bitfinex_historical_data(days=ma_period, symbol='tBTCUST', retries=3, de
     except Exception as e:
         log_message(f"Failed to load cache: {str(e)}", level="warning")
 
-    # Fetch historical data
-    end_time = int(time.time() * 1000)  # Current time in milliseconds
-    start_time = end_time - (days * 24 * 60 * 60 * 1000)  # Days ago
+    end_time = int(time.time() * 1000)
+    start_time = end_time - (days * 24 * 60 * 60 * 1000)
     url = f"https://api-pub.bitfinex.com/v2/candles/trade:1D:{symbol}/hist?start={start_time}&end={end_time}&limit={days}"
     for attempt in range(retries):
         try:
@@ -89,7 +86,6 @@ def get_bitfinex_historical_data(days=ma_period, symbol='tBTCUST', retries=3, de
             if not data:
                 raise Exception("No historical data returned")
             
-            # Bitfinex candles: [MTS, OPEN, CLOSE, HIGH, LOW, VOLUME]
             records = [
                 {'timestamp': int(candle[0] / 1000), 'close': float(candle[2])}
                 for candle in data
@@ -103,7 +99,6 @@ def get_bitfinex_historical_data(days=ma_period, symbol='tBTCUST', retries=3, de
             if len(df) < days:
                 log_message(f"Warning: Only {len(df)} data points available, needed {days}", level="warning")
 
-            # Save to cache
             try:
                 os.makedirs(os.path.dirname(cache_file), exist_ok=True)
                 df.to_csv(cache_file)
@@ -125,7 +120,7 @@ def bitfinex_buy_order(btc_amount, api_key, api_secret, retries=3, delay=5):
     url = "https://api.bitfinex.com/v2/auth/w/order/submit"
     for attempt in range(retries):
         try:
-            nonce = str(int(time.time() * 1000))  # Milliseconds since epoch
+            nonce = str(int(time.time() * 1000))
             body = {
                 'type': 'EXCHANGE MARKET',
                 'symbol': 'tBTCUST',
@@ -134,8 +129,7 @@ def bitfinex_buy_order(btc_amount, api_key, api_secret, retries=3, delay=5):
             }
             payload = json.dumps(body)
             
-            # Generate signature
-            sig_path = f"/api/v2/auth/w/order/submit"
+            sig_path = "/v2/auth/w/order/submit"
             signature = hmac.new(
                 api_secret.encode('utf-8'),
                 f"AUTH{nonce}{sig_path}{payload}".encode('utf-8'),
@@ -153,9 +147,8 @@ def bitfinex_buy_order(btc_amount, api_key, api_secret, retries=3, delay=5):
             response.raise_for_status()
             data = response.json()
             
-            # Bitfinex response: [ID, ...]
             if isinstance(data, list) and len(data) > 0:
-                return {'id': data[0]}  # Simulate CoinEx-like response
+                return {'id': data[0][0]}
             raise Exception(f"Bitfinex buy order error: {data}")
 
         except Exception as e:
@@ -166,12 +159,30 @@ def bitfinex_buy_order(btc_amount, api_key, api_secret, retries=3, delay=5):
                 log_message(f"Failed to place Bitfinex buy order: {str(e)}", level="error")
                 raise
 
+def make_daily_purchase():
+    """Make a daily purchase of BUY_DAILY_AMOUNT BTC."""
+    try:
+        btc_amount = float(os.environ.get('BUY_DAILY_AMOUNT', 0))
+        if btc_amount <= 0:
+            log_message("No daily purchase - BUY_DAILY_AMOUNT not set or invalid", level="warning")
+            return
+        api_key = os.environ.get('BITFINEX_API_KEY')
+        api_secret = os.environ.get('BITFINEX_API_SECRET')
+        if not api_key or not api_secret:
+            log_message("No daily purchase - Missing API credentials", level="error")
+            return
+        order = bitfinex_buy_order(btc_amount, api_key, api_secret)
+        current_price = get_bitfinex_price()
+        usdt_amount = btc_amount * current_price
+        log_message(f"Daily purchase: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) (Order ID: {order['id']})")
+    except Exception as e:
+        log_message(f"Failed to make daily purchase: {str(e)}", level="error")
+
 def compute_buy_decision():
     """Compute buy decision based on FNG and MA conditions."""
     current_date = datetime.now().strftime('%Y-%m-%d')
     log_message(f"{current_date}: Starting buy decision computation", level="info")
 
-    # Fetch Fear and Greed Index
     fng_value = None
     try:
         url = "https://api.alternative.me/fng/?limit=1"
@@ -183,13 +194,11 @@ def compute_buy_decision():
     except Exception as e:
         log_message(f"{current_date}: Failed to fetch Fear and Greed Index - {str(e)}", level="warning")
 
-    # Fetch historical data for MA
     try:
         btc_df = get_bitfinex_historical_data()
         if btc_df.empty:
             raise Exception("Historical data is empty")
         
-        # Adjust ma_period if insufficient data
         effective_ma_period = min(ma_period, len(btc_df))
         if effective_ma_period < ma_period:
             log_message(f"{current_date}: Adjusted MA period to {effective_ma_period} due to insufficient data ({len(btc_df)} points)", level="warning")
@@ -203,7 +212,6 @@ def compute_buy_decision():
         log_message(f"{current_date}: No purchase - Failed to fetch or process historical data: {str(e)}", level="error")
         return f"{current_date}: No purchase - Failed to fetch or process historical data"
 
-    # Get current BTC/USDT price
     try:
         current_price = get_bitfinex_price()
         log_message(f"{current_date}: Current BTC/USDT price: {current_price:.2f}")
@@ -211,21 +219,18 @@ def compute_buy_decision():
         log_message(f"{current_date}: No purchase - Failed to fetch price: {str(e)}", level="error")
         return f"{current_date}: No purchase - Failed to fetch price"
 
-    # Get thresholds
     try:
         fng_threshold = float(os.environ.get('FNG_THRESHOLD_PERCENT', 25))
-        ma_threshold = float(os.environ.get('MA_THRESHOLD_PERCENT', 0.1))  # 10% below MA
+        ma_threshold = float(os.environ.get('MA_THRESHOLD_PERCENT', 0.1))
     except ValueError as e:
         log_message(f"{current_date}: No purchase - Invalid threshold values: {str(e)}", level="error")
         return f"{current_date}: No purchase - Invalid threshold values"
 
-    # Check conditions
     buy_fng = fng_value is not None and fng_value <= fng_threshold
     buy_ma = current_price <= (1 - ma_threshold) * latest_ma
     overlap = buy_fng and buy_ma
     log_message(f"{current_date}: Buy conditions - FNG: {buy_fng}, MA: {buy_ma}, Overlap: {overlap}")
 
-    # Get API credentials and buy amounts
     api_key = os.environ.get('BITFINEX_API_KEY')
     api_secret = os.environ.get('BITFINEX_API_SECRET')
     buy_overlap_amount = os.environ.get('BUY_OVERLAP_AMOUNT')
@@ -236,7 +241,6 @@ def compute_buy_decision():
         log_message(f"{current_date}: No purchase - Missing BITFINEX_API_KEY or BITFINEX_API_SECRET", level="error")
         return f"{current_date}: No purchase - Missing API credentials"
 
-    # Determine purchase
     try:
         if overlap:
             btc_amount = float(buy_overlap_amount) if buy_overlap_amount else 0.0002
@@ -257,11 +261,9 @@ def compute_buy_decision():
         log_message(f"{current_date}: No purchase - Invalid buy amount: {str(e)}", level="error")
         return f"{current_date}: No purchase - Invalid buy amount"
 
-    # Calculate USDT amount (for logging only, not used in order)
     usdt_amount = btc_amount * current_price
     log_message(f"{current_date}: Planning to buy {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}")
 
-    # Place buy order
     try:
         order = bitfinex_buy_order(btc_amount, api_key, api_secret)
         log_message(f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason} (Order ID: {order['id']})")
@@ -297,7 +299,8 @@ def main():
         f"Buy amount for FNG: {os.environ.get('BUY_FNG_AMOUNT', 'Not set')}\n"
         f"Buy amount for MA: {os.environ.get('BUY_MA_AMOUNT', 'Not set')}\n"
         f"FNG threshold: {os.environ.get('FNG_THRESHOLD_PERCENT', 'Not set')}\n"
-        f"MA threshold: {os.environ.get('MA_THRESHOLD_PERCENT', 'Not set')}"
+        f"MA threshold: {os.environ.get('MA_THRESHOLD_PERCENT', 'Not set')}\n"
+        f"Daily buy amount: {os.environ.get('BUY_DAILY_AMOUNT', 'Not set')}"
     )
     log_message(start_message)
 
@@ -306,13 +309,16 @@ def main():
         return
 
     try:
+        schedule.every().day.at(trigger_time).do(make_daily_purchase)
         schedule.every().day.at(trigger_time).do(run_strategy)
-        log_message(f"Started strategy with daily trigger at {trigger_time} UTC")
+        log_message(f"Started strategy with daily trigger at {trigger_time} UTC for both daily purchase and strategy run")
     except schedule.ScheduleValueError as e:
         log_message(f"Error: Invalid TRIGGER_TIME format ({trigger_time}): {str(e)}", level="error")
         return
 
-    run_strategy()  # Run immediately on startup
+    make_daily_purchase()
+    run_strategy()
+
     while True:
         schedule.run_pending()
         time.sleep(60)
