@@ -1,20 +1,48 @@
-buy and hodl strategy script for coinex
+# BTC Buyer Strategy
 
+Buy and HODL strategy scripts for multiple exchanges:
+- CoinEx
+- Bitfinex
+- Hyperliquid (via Katoshi)
 
+## Build Command
 
-command to build 
+```bash
+docker build -f Dockerfile-[exchange] -t btc-buyer-[exchange] .
+```
 
-docker build -t btc-buyer .
+Example for Katoshi:
+```bash
+docker build -f Dockerfile-katoshi -t btc-buyer-katoshi .
+```
 
+## Run Command
 
-command to run 
+```bash
+docker run --env-file .env btc-buyer-[exchange]
+```
 
-docker run --env-file {your_local_env_file} btc-buyer -f Dockerfile-{exchange}
+## Running Locally
 
-if you want to run it without building container:
+1. Export environment variables:
+   ```bash
+   export $(grep -v '^#' .env | xargs)
+   ```
+2. Install requirements:
+   ```bash
+   pip install -r requirements-[exchange].txt
+   ```
+3. Run script:
+   ```bash
+   python3 strategy_[exchange]_fng_ma_buyer.py
+   ```
 
-export $(grep -v '^#' .env | xargs)
+## Configuration
 
-pip requirements.txt
+Refer to `envstemplate` for required environment variables.
 
-python3 strategy_{exchange}_fng_ma_buyer.py
+### Katoshi Specifics
+To use the Hyperliquid strategy via Katoshi, you need to set:
+- `KATOSHI_API_KEY`: Your Katoshi API key
+- `KATOSHI_BOT_ID`: Your Katoshi Bot ID
+- `KATOSHI_WEBHOOK_ID`: The ID from your webhook URL (e.g. 1451 from `.../signal?id=1451`)

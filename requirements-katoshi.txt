@@ -1,0 +1,4 @@
+requests
+pandas
+schedule
+sentry-sdk
