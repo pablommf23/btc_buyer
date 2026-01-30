@@ -10,7 +10,6 @@ from requests.exceptions import RequestException
 from sentry_sdk import capture_message, capture_exception
 
 # Initialize Sentry
-# Initialize Sentry
 sentry_dsn = os.environ.get('SENTRY_DSN')
 if not sentry_dsn:
     print("Warning: SENTRY_DSN not set. Logging to console only.")
@@ -33,13 +32,13 @@ def log_message(message, level="info"):
 
 def validate_env_vars():
     """Validate required environment variables."""
+    # REMOVED FNG_THRESHOLD_PERCENT and MA_THRESHOLD_PERCENT from required list
+    # because they have default values in the logic.
     required_vars = [
         'KATOSHI_API_KEY', 
         'KATOSHI_BOT_ID', 
         'KATOSHI_WEBHOOK_ID',
-        'TRIGGER_TIME', 
-        'FNG_THRESHOLD_PERCENT', 
-        'MA_THRESHOLD_PERCENT'
+        'TRIGGER_TIME'
     ]
     missing = [var for var in required_vars if not os.environ.get(var)]
     if missing:
@@ -92,8 +91,6 @@ def get_hyperliquid_historical_data(days=ma_period, coin='BTC', retries=3, delay
         log_message(f"Failed to load cache: {str(e)}", level="warning")
 
     end_time = int(time.time() * 1000)
-    # Fetch a bit more than needed to be safe, e.g. days + buffer
-    # Hyperliquid limit is 5000 candles, which is plenty for 730 days
     start_time = end_time - ((days + 50) * 24 * 60 * 60 * 1000)
     
     url = "https://api.hyperliquid.xyz/info"
@@ -116,19 +113,12 @@ def get_hyperliquid_historical_data(days=ma_period, coin='BTC', retries=3, delay
             if not data:
                 raise Exception("No historical data returned")
             
-            # Hyperliquid candle format:
-            # {"t": timestamp_ms, "o": open, "h": high, "l": low, "c": close, "v": volume, "n": trades}
-            # Or array format depending on endpoint version? 
-            # The search result for candleSnapshot usually returns list of objects like:
-            # { "t": 123456789, "o": "100.5", ... }
-            
             records = []
             for candle in data:
-                # Handle possible string values for numbers
                 close_price = float(candle.get('c', 0)) if isinstance(candle, dict) else float(candle['c'])
                 timestamp = int(candle.get('t', 0)) if isinstance(candle, dict) else int(candle['t'])
                 records.append({
-                    'timestamp': int(timestamp / 1000), # Convert to seconds for consistency
+                    'timestamp': int(timestamp / 1000), 
                     'close': close_price
                 })
 
@@ -169,30 +159,22 @@ def katoshi_buy_order(btc_amount, retries=3, delay=5):
         "action": "market_order",
         "coin": "BTC",
         "is_buy": True,
-        "size": round(btc_amount, 6), # Adjust precision as needed, Hyperliquid usually fine with some decimals
+        "size": round(btc_amount, 6),
         "reduce_only": False,
         "bot_id": int(bot_id) if bot_id.isdigit() else bot_id,
         "api_key": api_key
     }
     
-    # Katoshi expects headers? The screenshot didn't show specific custom headers, 
-    # but Postman sends Content-Type: application/json by default for raw JSON body.
     headers = {"Content-Type": "application/json"}
 
     for attempt in range(retries):
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=20)
-            
-            # Log full response text if not OK, to catch specific API errors like "size too small"
             if not response.ok:
                  log_message(f"Katoshi API Error ({response.status_code}): {response.text}", level="error")
             
             response.raise_for_status()
-            
-            # Log response for debugging
             log_message(f"Katoshi Response: {response.text}", level="info")
-            
-            # Assuming success if 200 OK, but should verify response content if possible
             return {'id': 'katoshi_signal_sent', 'response': response.text}
             
         except Exception as e:
@@ -265,7 +247,8 @@ def compute_buy_decision():
 
     try:
         fng_threshold = float(os.environ.get('FNG_THRESHOLD_PERCENT', 25))
-        ma_threshold = float(os.environ.get('MA_THRESHOLD_PERCENT', 0.1))
+        # CHANGED default from 0.1 to 0.0 to fix logic
+        ma_threshold = float(os.environ.get('MA_THRESHOLD_PERCENT', 0.0))
     except ValueError as e:
         log_message(f"{current_date}: No purchase - Invalid threshold values: {str(e)}", level="error")
         return f"{current_date}: No purchase - Invalid threshold values"
@@ -358,14 +341,6 @@ def main():
         log_message(f"Error: Invalid TRIGGER_TIME format ({trigger_time}): {str(e)}", level="error")
         return
 
-    # Initial runs? No, usually strategies just wait for the trigger time.
-    # The bitfinex script had `make_daily_purchase()` and `run_strategy()` calls at the end of setup?
-    # Let me check the original bitfinex script again.
-    # Lines 300, 301 in bitfinex script:
-    # make_daily_purchase()
-    # run_strategy()
-    # It seems the user wants it to run once on start. I will keep this behavior.
-    
     make_daily_purchase()
     run_strategy()
 
