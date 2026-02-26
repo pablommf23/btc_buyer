@@ -218,7 +218,12 @@ def compute_buy_decision():
     # Get thresholds
     try:
         fng_threshold = float(os.environ.get('FNG_THRESHOLD_PERCENT', 25))
-        ma_threshold = float(os.environ.get('MA_THRESHOLD_PERCENT', 0.1))  # 10% below MA
+        ma_threshold = float(os.environ.get('MA_THRESHOLD_PERCENT', 0.1))
+        
+        # Auto-correct if user provides whole number percentage (e.g. 5 instead of 0.05)
+        if ma_threshold >= 1:
+             ma_threshold = ma_threshold / 100
+             log_message(f"Corrected MA_THRESHOLD_PERCENT to {ma_threshold} (assumed percentage input)")
     except ValueError as e:
         log_message(f"{current_date}: No purchase - Invalid threshold values: {str(e)}", level="error")
         return f"{current_date}: No purchase - Invalid threshold values"
