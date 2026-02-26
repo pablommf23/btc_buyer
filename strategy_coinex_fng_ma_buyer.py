@@ -218,7 +218,12 @@ def compute_buy_decision():
     # Get thresholds
     try:
         fng_threshold = float(os.environ.get('FNG_THRESHOLD_PERCENT', 25))
-        ma_threshold = float(os.environ.get('MA_THRESHOLD_PERCENT', 0.1))  # 10% below MA
+        ma_threshold = float(os.environ.get('MA_THRESHOLD_PERCENT', 0.1))
+        
+        # Auto-correct if user provides whole number percentage (e.g. 5 instead of 0.05)
+        if ma_threshold >= 1:
+             ma_threshold = ma_threshold / 100
+             log_message(f"Corrected MA_THRESHOLD_PERCENT to {ma_threshold} (assumed percentage input)")
     except ValueError as e:
         log_message(f"{current_date}: No purchase - Invalid threshold values: {str(e)}", level="error")
         return f"{current_date}: No purchase - Invalid threshold values"
@@ -230,8 +235,8 @@ def compute_buy_decision():
     log_message(f"{current_date}: Buy conditions - FNG: {buy_fng}, MA: {buy_ma}, Overlap: {overlap}")
 
     # Get API credentials and buy amounts
-    api_key = '40EC2CF286374A0AB0E2096230AF300C'  #os.environ.get('COINEX_API_KEY')
-    api_secret = 'EC7251EE5C287BFCF642DC3597542084E9176EAC2903D97B' #os.environ.get('COINEX_API_SECRET')
+    api_key = os.environ.get('COINEX_API_KEY')
+    api_secret = os.environ.get('COINEX_API_SECRET')
     buy_overlap_amount = os.environ.get('BUY_OVERLAP_AMOUNT')
     buy_fng_amount = os.environ.get('BUY_FNG_AMOUNT')
     buy_ma_amount = os.environ.get('BUY_MA_AMOUNT')
