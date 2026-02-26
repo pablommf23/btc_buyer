@@ -230,8 +230,8 @@ def compute_buy_decision():
     log_message(f"{current_date}: Buy conditions - FNG: {buy_fng}, MA: {buy_ma}, Overlap: {overlap}")
 
     # Get API credentials and buy amounts
-    api_key = '40EC2CF286374A0AB0E2096230AF300C'  #os.environ.get('COINEX_API_KEY')
-    api_secret = 'EC7251EE5C287BFCF642DC3597542084E9176EAC2903D97B' #os.environ.get('COINEX_API_SECRET')
+    api_key = os.environ.get('COINEX_API_KEY')
+    api_secret = os.environ.get('COINEX_API_SECRET')
     buy_overlap_amount = os.environ.get('BUY_OVERLAP_AMOUNT')
     buy_fng_amount = os.environ.get('BUY_FNG_AMOUNT')
     buy_ma_amount = os.environ.get('BUY_MA_AMOUNT')
