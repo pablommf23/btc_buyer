@@ -35,8 +35,8 @@ def validate_env_vars():
     # REMOVED FNG_THRESHOLD_PERCENT and MA_THRESHOLD_PERCENT from required list
     # because they have default values in the logic.
     required_vars = [
-        'KATOSHI_API_KEY', 
-        'KATOSHI_BOT_ID', 
+        'KATOSHI_API_KEY',
+        'KATOSHI_BOT_ID',
         'KATOSHI_WEBHOOK_ID',
         'TRIGGER_TIME'
     ]
@@ -44,6 +44,25 @@ def validate_env_vars():
     if missing:
         log_message(f"Error: Missing environment variables: {', '.join(missing)}", level="error")
         return False
+
+    amount_vars = {
+        'BUY_OVERLAP_AMOUNT': (0.000001, 10.0),
+        'BUY_FNG_AMOUNT': (0.000001, 10.0),
+        'BUY_MA_AMOUNT': (0.000001, 10.0),
+        'BUY_DAILY_AMOUNT': (0.0, 10.0),
+    }
+    for var, (min_val, max_val) in amount_vars.items():
+        raw = os.environ.get(var)
+        if raw is not None:
+            try:
+                val = float(raw)
+                if val != 0.0 and not (min_val <= val <= max_val):
+                    log_message(f"Error: {var}={val} is outside acceptable range [{min_val}, {max_val}]", level="error")
+                    return False
+            except ValueError:
+                log_message(f"Error: {var}='{raw}' is not a valid number", level="error")
+                return False
+
     return True
 
 def get_hyperliquid_price(coin='BTC', retries=3, delay=5):
