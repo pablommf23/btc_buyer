@@ -36,6 +36,25 @@ def validate_env_vars():
     if missing:
         log_message(f"Error: Missing environment variables: {', '.join(missing)}", level="error")
         return False
+
+    amount_vars = {
+        'BUY_OVERLAP_AMOUNT': (0.000001, 10.0),
+        'BUY_FNG_AMOUNT': (0.000001, 10.0),
+        'BUY_MA_AMOUNT': (0.000001, 10.0),
+        'BUY_DAILY_AMOUNT': (0.0, 10.0),
+    }
+    for var, (min_val, max_val) in amount_vars.items():
+        raw = os.environ.get(var)
+        if raw is not None:
+            try:
+                val = float(raw)
+                if val != 0.0 and not (min_val <= val <= max_val):
+                    log_message(f"Error: {var}={val} is outside acceptable range [{min_val}, {max_val}]", level="error")
+                    return False
+            except ValueError:
+                log_message(f"Error: {var}='{raw}' is not a valid number", level="error")
+                return False
+
     return True
 
 def get_coinex_price(symbol='BTCUSDT', retries=3, delay=5):
@@ -137,14 +156,12 @@ def coinex_buy_order(btc_amount, api_key, api_secret, retries=3, delay=5):
 
             # 1. Sort parameters alphabetically (CRITICAL for signature)
             query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
-            print(f"Query string for signature: {query_string}")
             # 2. Generate signature (HMAC-SHA256, uppercase)
             signature = hmac.new(
                 api_secret.encode('utf-8'),
                 query_string.encode('utf-8'),
                 hashlib.sha256
             ).hexdigest().upper()
-            print(f"Generated signature: {signature}")
             # 3. Set headers (EXACT names and Content-Type)
             headers = {
                 'X-COINEX-ACCESS-ID': api_key,
@@ -152,7 +169,6 @@ def coinex_buy_order(btc_amount, api_key, api_secret, retries=3, delay=5):
                 'X-COINEX-SIGN': signature,
                 'Content-Type': 'application/json'  # Important!
             }
-            print(f"Headers: {headers}")
             # 4. Send POST request with params as JSON body
             response = requests.post(url, headers=headers, data=json.dumps(params), timeout=20)
             response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
