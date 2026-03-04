@@ -126,7 +126,7 @@ def bitfinex_buy_order(btc_amount, retries=3, delay=5):
         try:
             notification = bfx.rest.auth.submit_order(
                 type="EXCHANGE MARKET",
-                symbol="tBTCUST",
+                symbol="tBTCUSD",
                 amount=str(round(btc_amount, 8)),
                 price=None,
                 meta={"client_id": f"strategy6_{uuid.uuid4().hex[:8]}"}
@@ -229,13 +229,13 @@ def compute_buy_decision():
 
     try:
         if overlap:
-            btc_amount = float(buy_overlap_amount) if buy_overlap_order_amount else 0.0002
+            btc_amount = float(buy_overlap_amount) if buy_overlap_amount else 0.0002
             reason = f"Overlap (Fear and Greed ≤ {fng_threshold}, Price ≥ {ma_threshold*100}% below MA)"
         elif buy_fng:
             btc_amount = float(buy_fng_amount) if buy_fng_amount else 0.0001
             reason = f"Fear and Greed ≤ {fng_threshold}"
         elif buy_ma:
-            btc_order_amount = float(buy_ma_amount) if buy_ma_amount else 0.0005
+            btc_amount = float(buy_ma_amount) if buy_ma_amount else 0.0005
             reason = f"Price ≥ {ma_threshold*100}% below MA"
         else:
             log_message(f"{current_date}: No purchase - Conditions not met")
