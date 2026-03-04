@@ -23,6 +23,7 @@ else:
 
 # Configuration
 ma_period = int(os.environ.get('MA_PERIOD_DAYS', 730))
+dry_run = os.environ.get('DRY_RUN', 'false').lower() in ('true', '1', 'yes')
 
 def log_message(message, level="info"):
     """Log message to console and Sentry if configured."""
@@ -216,6 +217,9 @@ def make_daily_purchase():
              log_message("No daily purchase - Missing environment variables", level="error")
              return
 
+        if dry_run:
+            log_message(f"Daily purchase: DRY RUN - Skipping order for {btc_amount} BTC")
+            return
         order = katoshi_buy_order(btc_amount)
         current_price = get_hyperliquid_price()
         usdt_amount = btc_amount * current_price
@@ -266,7 +270,7 @@ def compute_buy_decision():
 
     try:
         fng_threshold = float(os.environ.get('FNG_THRESHOLD_PERCENT', 25))
-        ma_threshold = float(os.environ.get('MA_THRESHOLD_PERCENT', 0.0))
+        ma_threshold = float(os.environ.get('MA_THRESHOLD_PERCENT', 0.1))
         
         # Auto-correct if user provides whole number percentage (e.g. 5 instead of 0.05)
         if ma_threshold >= 1:
@@ -311,6 +315,10 @@ def compute_buy_decision():
     usdt_amount = btc_amount * current_price
     log_message(f"{current_date}: Planning to buy {btc_amount} BTC (~{usdt_amount:.2f} USD) - {reason}")
 
+    if dry_run:
+        log_message(f"{current_date}: DRY RUN - Skipping order placement for {btc_amount} BTC (~{usdt_amount:.2f} USD) - {reason}")
+        return f"{current_date}: DRY RUN - Would buy {btc_amount} BTC (~{usdt_amount:.2f} USD) - {reason}"
+
     try:
         order = katoshi_buy_order(btc_amount)
         log_message(f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USD) - {reason} (Katoshi Resp: {order['id']})")
@@ -348,7 +356,8 @@ def main():
         f"Buy amount for MA: {os.environ.get('BUY_MA_AMOUNT', 'Not set')}\n"
         f"FNG threshold: {os.environ.get('FNG_THRESHOLD_PERCENT', 'Not set')}\n"
         f"MA threshold: {os.environ.get('MA_THRESHOLD_PERCENT', 'Not set')}\n"
-        f"Daily buy amount: {os.environ.get('BUY_DAILY_AMOUNT', 'Not set')}"
+        f"Daily buy amount: {os.environ.get('BUY_DAILY_AMOUNT', 'Not set')}\n"
+        f"Dry run mode: {'ENABLED' if dry_run else 'Disabled'}"
     )
     log_message(start_message)
 
