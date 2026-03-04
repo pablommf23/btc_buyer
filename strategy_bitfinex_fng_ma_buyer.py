@@ -17,11 +17,17 @@ sentry_dsn = os.environ.get('SENTRY_DSN')
 if not sentry_dsn:
     print("Warning: SENTRY_DSN not set. Logging to console only.")
 else:
-    sentry_sdk.init(dsn=sentry_dsn, traces_sample_rate=1.0)
+    try:
+        sentry_sdk.init(dsn=sentry_dsn, traces_sample_rate=1.0)
+        print("Sentry initialized successfully.")
+    except Exception as e:
+        print(f"Warning: Failed to initialize Sentry (Invalid DSN?): {e}. Logging to console only.")
+        sentry_dsn = None
 
 # Configuration
 API_VERSION = 'v2'
 ma_period = int(os.environ.get('MA_PERIOD_DAYS', 730))
+dry_run = os.environ.get('DRY_RUN', 'false').lower() in ('true', '1', 'yes')
 
 # Initialize Bitfinex client
 bfx = BitfinexClient(
@@ -156,6 +162,9 @@ def make_daily_purchase():
         if not api_key or not api_secret:
             log_message("No daily purchase - Missing API credentials", level="error")
             return
+        if dry_run:
+            log_message(f"Daily purchase: DRY RUN - Skipping order for {btc_amount} BTC")
+            return
         order = bitfinex_buy_order(btc_amount)
         current_price = get_bitfinex_price()
         usdt_amount = btc_amount * current_price
@@ -250,6 +259,10 @@ def compute_buy_decision():
     usdt_amount = btc_amount * current_price
     log_message(f"{current_date}: Planning to buy {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}")
 
+    if dry_run:
+        log_message(f"{current_date}: DRY RUN - Skipping order placement for {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}")
+        return f"{current_date}: DRY RUN - Would buy {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}"
+
     try:
         order = bitfinex_buy_order(btc_amount)
         log_message(f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason} (Order ID: {order['id']})")
@@ -286,7 +299,8 @@ def main():
         f"Buy amount for MA: {os.environ.get('BUY_MA_AMOUNT', 'Not set')}\n"
         f"FNG threshold: {os.environ.get('FNG_THRESHOLD_PERCENT', 'Not set')}\n"
         f"MA threshold: {os.environ.get('MA_THRESHOLD_PERCENT', 'Not set')}\n"
-        f"Daily buy amount: {os.environ.get('BUY_DAILY_AMOUNT', 'Not set')}"
+        f"Daily buy amount: {os.environ.get('BUY_DAILY_AMOUNT', 'Not set')}\n"
+        f"Dry run mode: {'ENABLED' if dry_run else 'Disabled'}"
     )
     log_message(start_message)
 

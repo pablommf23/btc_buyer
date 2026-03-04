@@ -17,11 +17,17 @@ sentry_dsn = os.environ.get('SENTRY_DSN')
 if not sentry_dsn:
     print("Warning: SENTRY_DSN not set. Logging to console only.")
 else:
-    sentry_sdk.init(dsn=sentry_dsn, traces_sample_rate=1.0)
+    try:
+        sentry_sdk.init(dsn=sentry_dsn, traces_sample_rate=1.0)
+        print("Sentry initialized successfully.")
+    except Exception as e:
+        print(f"Warning: Failed to initialize Sentry (Invalid DSN?): {e}. Logging to console only.")
+        sentry_dsn = None
 
 # Configuration
 API_VERSION = 'v2'  # Use API v2
 ma_period = int(os.environ.get('MA_PERIOD_DAYS', 730))  # Default to 730 days
+dry_run = os.environ.get('DRY_RUN', 'false').lower() in ('true', '1', 'yes')
 
 def log_message(message, level="info"):
     """Log message to console and Sentry if configured."""
@@ -270,6 +276,10 @@ def compute_buy_decision():
     usdt_amount = btc_amount * current_price
     log_message(f"{current_date}: Planning to buy {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}")
 
+    if dry_run:
+        log_message(f"{current_date}: DRY RUN - Skipping order placement for {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}")
+        return f"{current_date}: DRY RUN - Would buy {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}"
+
     # Place buy order
     try:
         order = coinex_buy_order(btc_amount, api_key, api_secret)
@@ -306,7 +316,8 @@ def main():
         f"Buy amount for FNG: {os.environ.get('BUY_FNG_AMOUNT', 'Not set')}\n"
         f"Buy amount for MA: {os.environ.get('BUY_MA_AMOUNT', 'Not set')}\n"
         f"FNG threshold: {os.environ.get('FNG_THRESHOLD_PERCENT', 'Not set')}\n"
-        f"MA threshold: {os.environ.get('MA_THRESHOLD_PERCENT', 'Not set')}"
+        f"MA threshold: {os.environ.get('MA_THRESHOLD_PERCENT', 'Not set')}\n"
+        f"Dry run mode: {'ENABLED' if dry_run else 'Disabled'}"
     )
     log_message(start_message)
 
