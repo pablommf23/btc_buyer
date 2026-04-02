@@ -10,4 +10,10 @@ RUN pip install --no-cache-dir -r requirements-coinex.txt
 
 COPY strategy_coinex_fng_ma_buyer.py .
 
-CMD ["python", "strategy_coinex_fng_ma_buyer.py"]
+RUN adduser --disabled-password --gecos "" appuser && chown -R appuser /app
+USER appuser
+
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import schedule; print('ok')" || exit 1
+
+CMD ["python", "-u", "strategy_coinex_fng_ma_buyer.py"]

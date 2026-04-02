@@ -31,6 +31,28 @@ def log_message(message, level="info"):
     if sentry_dsn:
         capture_message(message, level=level)
 
+def log_trade(exchange, btc_amount, price, reason, order_id, trade_file='./trades.csv'):
+    """Append a completed trade to the local CSV trade log."""
+    import csv
+    row = {
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'exchange': exchange,
+        'btc_amount': btc_amount,
+        'price_usdt': price,
+        'usdt_total': round(btc_amount * price, 2),
+        'trigger_reason': reason,
+        'order_id': order_id,
+    }
+    file_exists = os.path.exists(trade_file)
+    try:
+        with open(trade_file, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=row.keys())
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+    except Exception as e:
+        log_message(f"Failed to write trade log: {str(e)}", level="warning")
+
 def validate_env_vars():
     """Validate required environment variables."""
     # REMOVED FNG_THRESHOLD_PERCENT and MA_THRESHOLD_PERCENT from required list
@@ -224,6 +246,7 @@ def make_daily_purchase():
         current_price = get_hyperliquid_price()
         usdt_amount = btc_amount * current_price
         log_message(f"Daily purchase: Bought {btc_amount} BTC (~{usdt_amount:.2f} USD) (Katoshi Resp: {order['id']})")
+        log_trade('hyperliquid', btc_amount, current_price, 'daily_purchase', order['id'])
     except Exception as e:
         log_message(f"Failed to make daily purchase: {str(e)}", level="error")
 
@@ -322,6 +345,7 @@ def compute_buy_decision():
     try:
         order = katoshi_buy_order(btc_amount)
         log_message(f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USD) - {reason} (Katoshi Resp: {order['id']})")
+        log_trade('hyperliquid', btc_amount, current_price, reason, order['id'])
         return f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USD) - {reason}"
     except Exception as e:
         log_message(f"{current_date}: Failed to buy {btc_amount} BTC (~{usdt_amount:.2f} USD) - {reason} (Error: {str(e)})", level="error")

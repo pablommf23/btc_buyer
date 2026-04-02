@@ -35,6 +35,28 @@ def log_message(message, level="info"):
     if sentry_dsn:
         capture_message(message, level=level)
 
+def log_trade(exchange, btc_amount, price, reason, order_id, trade_file='./trades.csv'):
+    """Append a completed trade to the local CSV trade log."""
+    import csv
+    row = {
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'exchange': exchange,
+        'btc_amount': btc_amount,
+        'price_usdt': price,
+        'usdt_total': round(btc_amount * price, 2),
+        'trigger_reason': reason,
+        'order_id': order_id,
+    }
+    file_exists = os.path.exists(trade_file)
+    try:
+        with open(trade_file, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=row.keys())
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+    except Exception as e:
+        log_message(f"Failed to write trade log: {str(e)}", level="warning")
+
 def validate_env_vars():
     """Validate required environment variables."""
     required_vars = ['COINEX_API_KEY', 'COINEX_API_SECRET', 'TRIGGER_TIME', 'FNG_THRESHOLD_PERCENT', 'MA_THRESHOLD_PERCENT']
@@ -300,6 +322,7 @@ def compute_buy_decision():
     try:
         order = coinex_buy_order(btc_amount, api_key, api_secret)
         log_message(f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason} (Order ID: {order['id']})")
+        log_trade('coinex', btc_amount, current_price, reason, order['id'])
         return f"{current_date}: Bought {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason}"
     except Exception as e:
         log_message(f"{current_date}: Failed to buy {btc_amount} BTC (~{usdt_amount:.2f} USDT) - {reason} (Error: {str(e)})", level="error")

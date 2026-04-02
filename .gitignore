@@ -4,3 +4,5 @@ envs7
 +*.env
 .old
 btc_usdt_historical.csv
+__pycache__/
+*.pyc
